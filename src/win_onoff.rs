@@ -170,8 +170,8 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                         let keyboard = raw_input.data.keyboard;
 
                         if keyboard.Message == WM_KEYDOWN {
-                            println!("keyboard.Vkey: {}", keyboard.VKey);
-                            println!("kayboard.MakeCode: {}", keyboard.MakeCode);
+                            // println!("keyboard.Vkey: {}", keyboard.VKey);
+                            // println!("kayboard.MakeCode: {}", keyboard.MakeCode);
 
                             // if keyboard.VKey == VK_IME_ON {
                             //     if let Some(ime_status_sender) = IME_STATUS_SENDER.get() {
