@@ -1,0 +1,18 @@
+{
+    "rust-analyzer.cargo.features": [
+        "fcitx",
+        // "winonoff"
+    ],
+    "cSpell.words": [
+        "dbus",
+        "fcitx",
+        "ibus",
+        "kanata",
+        "lexopt",
+        "onoff",
+        "sendmessage",
+        "winonoff",
+        "zbus",
+        "zvariant"
+    ]
+}

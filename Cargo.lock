@@ -407,7 +407,7 @@ dependencies = [
 
 [[package]]
 name = "kanata_ime_observer"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "backon",
  "embed-resource",
