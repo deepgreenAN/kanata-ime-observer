@@ -29,7 +29,7 @@ pub static FATAL_ERROR_RECEIVER: OnceCell<Mutex<Receiver<AppError>>> = OnceCell:
 pub struct FatalError(Arc<OnceCell<AppError>>);
 
 impl FatalError {
-    pub fn new() -> FatalError {
+    fn new() -> FatalError {
         Self(Arc::new(OnceCell::new()))
     }
     pub fn is_none(&self) -> bool {
@@ -83,19 +83,44 @@ pub fn catch_fatal_error(fatal_error: FatalError) {
         match receiver.try_lock() {
             Ok(guard) => {
                 if let Ok(err) = guard.recv() {
-                    error!("{err}");
-                    let _ = fatal_error.0.set(err);
+                    let err_str = err.to_string();
+                    if fatal_error.0.set(err).is_ok() {
+                        error!("Caught the FatalError: {err_str}");
+                    }
                 }
             }
             Err(e) => {
                 error!(
-                    "Inner bug. fatal_error_loop (FATAL_ERROR_RECEIVER) must be used in a single thread at the same time.: {e}"
+                    "Inner bug. initialize_fatal_error or fatal_error_loop (FATAL_ERROR_RECEIVER) must be used in a single thread at the same time.: {e}"
                 );
             }
         }
     } else {
         error!("Inner bug. Set the FATAL_ERROR_RECEIVER");
     }
+}
+
+/// グローバルレシーバーの初期化・FatalErrorの作成．ループの最初に呼ぶ．
+pub fn initialize_fatal_error() -> FatalError {
+    if let Some(receiver) = FATAL_ERROR_RECEIVER.get() {
+        match receiver.try_lock() {
+            Ok(guard) => {
+                // レシーバー内にデータがある場合は取り出す．
+                if let Ok(unused_fatal_error) = guard.try_recv() {
+                    debug!("Unused fatal error discarded: {unused_fatal_error}");
+                }
+            }
+            Err(e) => {
+                error!(
+                    "Inner bug. initialize_fatal_error or fatal_error_loop (FATAL_ERROR_RECEIVER) must be used in a single thread at the same time.: {e}"
+                );
+            }
+        }
+    } else {
+        error!("Inner bug. Set the FATAL_ERROR_RECEIVER");
+    }
+
+    FatalError::new()
 }
 
 /// アプリケーションの最初に呼ぶ．

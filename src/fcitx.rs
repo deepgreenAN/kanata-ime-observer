@@ -1,6 +1,6 @@
 use crate::{AppError, FatalError, handle_try_send, send_fatal_error};
 
-use log::{error, info};
+use log::{debug, error, info};
 use zbus::{Error as ZbusError, blocking::Connection, proxy};
 
 use std::{
@@ -105,5 +105,6 @@ impl FcitxImeReceiver {
     pub fn shutdown(self) {
         send_fatal_error(AppError::CustomError("Receiver shutdown.".to_string()));
         let _ = self._worker_handle.join();
+        debug!("FcitxImeReceiver shutdown.")
     }
 }
