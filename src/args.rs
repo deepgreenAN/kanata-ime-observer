@@ -12,6 +12,9 @@ use crate::win_onoff::WindowsImeOnOffReceiverConfig;
 #[cfg(all(not(feature = "winonoff"), target_os = "windows"))]
 use crate::win::WindowsImeReceiverConfig;
 
+#[cfg(target_os = "macos")]
+use crate::mac::MacImeReceiverConfig;
+
 use std::collections::HashMap;
 
 use lexopt::{
@@ -58,8 +61,8 @@ fn options_str() -> String {
     --retry-span <MILLISECOND> (win_onoff only) (default 100)
         The span [ms] of retry SendMessageTimeout.
 
-    --delay <MILLISECOND> (win_onoff only) (default 50)
-        The delay from action to SendMessageTimeout.  
+    --delay <MILLISECOND> (win_onoff default 50) (mac default 50)
+        The delay from action to SendMessageTimeout(win_onoff), TISCopyCurrentKeyboardInputSource(mac).  
 ".to_string()
 }
 
@@ -115,6 +118,9 @@ pub struct Args {
 
     #[cfg(all(not(feature = "winonoff"), target_os = "windows"))]
     pub app_config: WindowsImeReceiverConfig,
+
+    #[cfg(target_os = "macos")]
+    pub app_config: MacImeReceiverConfig,
 }
 
 pub fn parse_args() -> Result<Args, AppError> {
@@ -131,6 +137,9 @@ pub fn parse_args() -> Result<Args, AppError> {
 
     #[cfg(all(not(feature = "winonoff"), target_os = "windows"))]
     let mut app_config = WindowsImeReceiverConfig::default();
+
+    #[cfg(target_os = "macos")]
+    let mut app_config = MacImeReceiverConfig::default();
 
     let subcommand = parser.value().map_err(|_|{AppError::ArgError("kanata_ime_observer has three subcommand 'kanata_ime_observer config', 'kanata_ime_observer layer' and 'kanata_ime_observer log'.".to_owned())})?;
 
@@ -276,7 +285,7 @@ pub fn parse_args() -> Result<Args, AppError> {
                 let retry_span: u64 = parser.value()?.parse()?;
                 app_config.retry_span = retry_span;
             }
-            #[cfg(all(feature = "winonoff", target_os = "windows"))]
+            #[cfg(any(all(feature = "winonoff", target_os = "windows"), target_os = "macos"))]
             Long("delay") => {
                 let delay: u64 = parser.value()?.parse()?;
                 app_config.delay = delay;

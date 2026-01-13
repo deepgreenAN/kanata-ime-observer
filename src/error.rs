@@ -11,10 +11,15 @@ pub enum AppError {
     #[error("DbusParseError")]
     DbusParseError,
 
-    /// UIループの場合各スレッドのループを終了する。その他では失敗しやすいため、ログのみとする．
+    /// メインループの場合各スレッドのループを終了する。その他では失敗しやすいため、ログのみとする．
     #[cfg(target_os = "windows")]
-    #[error("WinApiError")]
+    #[error("WinApiError: {0}")]
     WinApiError(String),
+
+    /// メインループの場合各スレッドのループを終了する。その他ではログのみとする。
+    #[cfg(target_os = "macos")]
+    #[error("MacApiError: {0}")]
+    MacApiError(String),
 
     /// 各スレッドのループを終了する．
     #[error("InnerReceiverError: inner sender was dropped. Receiver: {receiver_name}")]

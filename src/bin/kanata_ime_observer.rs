@@ -1,8 +1,8 @@
 use kanata_ime_observer::{
-    AppError, Command, FatalError, catch_fatal_error, initialize_fatal_error,
-    initialize_fatal_error_channel,
+    AppError, Command, FatalError, Message, catch_fatal_error, initialize_app,
+    initialize_fatal_error,
     kanata_tcp_types::{KanataClientMessage, KanataServerResponse},
-    send_fatal_error,
+    send_fatal_error, send_message,
 };
 
 #[cfg(all(feature = "fcitx", target_os = "linux"))]
@@ -16,6 +16,9 @@ use kanata_ime_observer::win_onoff::WindowsImeOnOffReceiver as Receiver;
 
 #[cfg(all(not(feature = "winonoff"), target_os = "windows"))]
 use kanata_ime_observer::win::WindowsImeReceiver as Receiver;
+
+#[cfg(target_os = "macos")]
+use kanata_ime_observer::mac::{MacImeReceiver as Receiver, mac_main_loop as main_loop};
 
 use log::{debug, error, info};
 
@@ -111,20 +114,17 @@ fn main() -> Result<(), AppError> {
 
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
 
-    let backoff_builder = ExponentialBuilder::default()
-        .with_min_delay(Duration::from_millis(100))
-        .with_max_delay(Duration::from_secs(10))
-        .with_max_times(10);
-
-    initialize_fatal_error_channel();
+    let (mut app_message_receiver, mut app_fatal_error_receiver) = initialize_app()?;
 
     loop {
-        let fatal_error = initialize_fatal_error();
+        let fatal_error = initialize_fatal_error(&app_fatal_error_receiver);
 
         let fatal_error_loop_handle = std::thread::spawn({
             let fatal_error = fatal_error.clone();
             move || {
-                catch_fatal_error(fatal_error);
+                catch_fatal_error(fatal_error, &app_fatal_error_receiver);
+
+                app_fatal_error_receiver
             }
         });
 
@@ -137,7 +137,12 @@ fn main() -> Result<(), AppError> {
             let reader_stream = kanata_connection;
             Ok((writer_stream, reader_stream))
         }
-        .retry(backoff_builder)
+        .retry(
+            ExponentialBuilder::default()
+                .with_min_delay(Duration::from_millis(100))
+                .with_max_delay(Duration::from_secs(10))
+                .with_max_times(10),
+        )
         .notify(|e, duration| {
             info!("Failed to connect to kanata: {e}");
             info!("Retry in {duration:?}");
@@ -146,16 +151,25 @@ fn main() -> Result<(), AppError> {
 
         info!("Connected to kanata.");
 
-        let mut receiver =
-            || -> Result<Receiver, AppError> { Receiver::new(&app_config, &fatal_error) }
-                .retry(backoff_builder)
-                .notify(|e, duration| {
-                    info!("Failed to initialize receiver: {e}");
-                    info!("Retry in {duration:?}");
-                })
-                .call()?; // 失敗可能性がある．
+        let mut ime_receiver = Receiver::new(app_message_receiver, &app_config, &fatal_error)?; // 失敗可能性がある
 
         info!("Receiver Initialized.");
+
+        let write_handle = std::thread::spawn({
+            let fatal_error = fatal_error.clone();
+            let command = Arc::clone(&command);
+
+            move || {
+                if let Err(e) =
+                    write_to_kanata(&mut ime_receiver, &command, writer_stream, &fatal_error)
+                {
+                    error!("write_to_kanata stopped: {e}");
+                    send_fatal_error(e);
+                }
+
+                ime_receiver.shutdown()
+            }
+        });
 
         let read_handle = std::thread::spawn({
             let fatal_error = fatal_error.clone();
@@ -167,35 +181,19 @@ fn main() -> Result<(), AppError> {
             }
         });
 
-        let write_handle = std::thread::spawn({
-            let fatal_error = fatal_error.clone();
-            let command = Arc::clone(&command);
+        // 以下メインスレッドの処理
+        #[cfg(target_os = "macos")]
+        if let Err(e) = main_loop(&fatal_error) {
+            error!("main_loop stopped: {e}");
+            send_fatal_error(e);
+        }
 
-            move || {
-                if let Err(e) =
-                    write_to_kanata(&mut receiver, &command, writer_stream, &fatal_error)
-                {
-                    error!("write_to_kanata stopped: {e}");
-                    send_fatal_error(e);
-                }
-
-                receiver.shutdown();
-            }
-        });
-
-        // メインスレッドの処理
-
-        let _ = write_handle.join();
-        let _ = read_handle.join();
-        let _ = fatal_error_loop_handle.join();
-
-        // if let Err(e) = write_to_kanata(&mut receiver, &command, writer_stream, &fatal_error) {
-        //     receiver.shutdown();
-        //     let _ = read_handle.join();
-        //     let _ = fatal_error_loop_handle.join();
-        //     error!("{e}");
-        //     error!("write_to_kanata stopped.");
-        // }
+        app_fatal_error_receiver = fatal_error_loop_handle
+            .join()
+            .expect("catch_fatal_error panicked.");
+        send_message(Message::CaughtFatalError); // ブロッキングしているrecvを解除する。
+        app_message_receiver = write_handle.join().expect("write_to_kanata panicked.");
+        read_handle.join().expect("read_from_kanata panicked.");
 
         std::thread::sleep(Duration::from_millis(100));
         info!("Main loop restarted.");

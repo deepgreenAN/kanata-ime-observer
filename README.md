@@ -6,12 +6,13 @@ IME(Input Method Editor) aware layer switch for [kanata](https://github.com/jtro
 
 kanata_ime_observer observes the following changes of IME.
 
-| file suffix | framework    | target change of observer | example                  | short-cut key (example)         |
-|-------------|--------------|---------------------------|--------------------------|---------------------------------|
-| linux_ibus  | ibus         | input method engine       | "xkb:us::eng", "mozc-jp" | `Super` + `Space`               |
-| linux_fcitx | fcitx5       | input method              | "keyboard-jp", "mozc"    | `grave`, `ZenkakuHankaku`       |
-| win_onoff   | IME(windows) | IME on, off               | "ime-on", "ime-off"      | `grave`, `ZenkakuHankaku`       |
-| win         | IME(windows) | keyboard layout           | "en-US", "ja-JP"         | `Alt` + `Shift`, `Win` + `Space`|
+| file suffix | framework    | target change of observer | example                              | short-cut key (example)         |
+|-------------|--------------|---------------------------|--------------------------------------|---------------------------------|
+| linux_ibus  | ibus         | input method engine       | "xkb:us::eng", "mozc-jp"             | `Super` + `Space`               |
+| linux_fcitx | fcitx5       | input method              | "keyboard-jp", "mozc"                | `grave`, `ZenkakuHankaku`       |
+| win_onoff   | IME(windows) | IME on, off               | "ime-on", "ime-off"                  | `grave`, `ZenkakuHankaku`       |
+| win         | IME(windows) | keyboard layout           | "en-US", "ja-JP"                     | `Alt` + `Shift`, `Win` + `Space`|
+| mac         | IME(macos)   | input source id           | "com.apple...RomajiTyping.Japanese"  | `ctl` + `Space`                 |
 
 ## Usage
 
