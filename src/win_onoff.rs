@@ -1,6 +1,9 @@
-use crate::{AppError, FatalError, handle_try_send, send_fatal_error};
+use crate::{
+    AppError, FatalError, InnerReceiver, Message, MessageReceiver, handle_try_send,
+    send_fatal_error, send_message,
+};
 
-use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+use std::sync::mpsc::sync_channel;
 use std::time::Duration;
 
 use windows::Win32::{
@@ -26,18 +29,11 @@ use windows::Win32::{
 
 use windows::core::w;
 
-use log::error;
-use once_cell::sync::OnceCell;
+use log::{debug, error};
 
 const IMC_GETOPENSTATUS: usize = 0x0005;
 const VK_IME_ON: u16 = 244;
 const VK_IME_OFF: u16 = 243;
-
-static GET_IME_MESSAGE_SENDER: OnceCell<SyncSender<GetImeMessage>> = OnceCell::new();
-static IME_STATUS_SENDER: OnceCell<SyncSender<String>> = OnceCell::new();
-
-// ime状態取得をリクエストするタイミングであることを示すメッセージ
-struct GetImeMessage;
 
 /// フォーカス変更時に実行されるコールバック
 extern "system" fn win_event_proc(
@@ -50,17 +46,7 @@ extern "system" fn win_event_proc(
     _dwmseventtime: u32,
 ) {
     if event == EVENT_SYSTEM_FOREGROUND {
-        if let Some(message_sender) = GET_IME_MESSAGE_SENDER.get() {
-            handle_try_send(
-                message_sender,
-                GetImeMessage,
-                "GET_IME_MESSAGE_SENDER".to_string(),
-            );
-        } else {
-            send_fatal_error(AppError::CustomError(
-                "Inner bug. Set the GET_IME_MESSAGE_SENDER".to_owned(),
-            ));
-        }
+        send_message(Message::GetImeStatus);
     }
 }
 
@@ -173,45 +159,9 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                             // println!("keyboard.Vkey: {}", keyboard.VKey);
                             // println!("kayboard.MakeCode: {}", keyboard.MakeCode);
 
-                            // if keyboard.VKey == VK_IME_ON {
-                            //     if let Some(ime_status_sender) = IME_STATUS_SENDER.get() {
-                            //         handle_try_send(
-                            //             ime_status_sender,
-                            //             "ime-on".to_string(),
-                            //             "IME_STATUS_SENDER".to_string(),
-                            //         );
-                            //     } else {
-                            //         FATAL_ERROR.set(AppError::CustomError(
-                            //             "Inner bug. Set the IME_STATUS_SENDER".to_owned(),
-                            //         ));
-                            //     }
-                            // } else if keyboard.VKey == VK_IME_OFF {
-                            //     if let Some(ime_status_sender) = IME_STATUS_SENDER.get() {
-                            //         handle_try_send(
-                            //             ime_status_sender,
-                            //             "ime-off".to_string(),
-                            //             "IME_STATUS_SENDER".to_string(),
-                            //         );
-                            //     } else {
-                            //         FATAL_ERROR.set(AppError::CustomError(
-                            //             "Inner bug. Set the IME_STATUS_SENDER".to_owned(),
-                            //         ));
-                            //     }
-                            // }
-
                             // kanataのバグ？でgrvではVK_IME_ONのみ出力するため、その都度問い合わせる。
                             if keyboard.VKey == VK_IME_ON || keyboard.VKey == VK_IME_OFF {
-                                if let Some(message_sender) = GET_IME_MESSAGE_SENDER.get() {
-                                    handle_try_send(
-                                        message_sender,
-                                        GetImeMessage,
-                                        "GET_IME_MESSAGE_SENDER".to_string(),
-                                    );
-                                } else {
-                                    send_fatal_error(AppError::CustomError(
-                                        "Inner bug. Set the GET_IME_MESSAGE_SENDER".to_owned(),
-                                    ));
-                                }
+                                send_message(Message::GetImeStatus);
                             }
                         }
                     }
@@ -227,8 +177,8 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
     }
 }
 
-// UIループ
-fn ui_loop(fatal_error: &FatalError) -> Result<(), AppError> {
+// winのメインループ。
+pub fn win_main_loop(fatal_error: &FatalError) -> Result<(), AppError> {
     unsafe {
         // hook
         let hook = SetWinEventHook(
@@ -319,15 +269,15 @@ impl Default for WindowsImeOnOffReceiverConfig {
 }
 
 pub struct WindowsImeOnOffReceiver {
-    _send_message_handle: std::thread::JoinHandle<()>,
-    _ui_handle: std::thread::JoinHandle<()>,
+    _worker_handle: std::thread::JoinHandle<MessageReceiver>,
     _polling_handle: Option<std::thread::JoinHandle<()>>,
-    inner_receiver: Receiver<String>,
+    inner_receiver: InnerReceiver,
     pre_ime_status: Option<String>,
 }
 
 impl WindowsImeOnOffReceiver {
     pub fn new(
+        message_receiver: MessageReceiver,
         config: &WindowsImeOnOffReceiverConfig,
         fatal_error: &FatalError,
     ) -> Result<Self, AppError> {
@@ -339,16 +289,10 @@ impl WindowsImeOnOffReceiver {
             polling_span,
         } = config;
 
-        let (get_ime_message_sender, get_ime_message_receiver) = sync_channel(1);
-        GET_IME_MESSAGE_SENDER
-            .set(get_ime_message_sender.clone())
-            .unwrap();
-
         let (inner_sender, inner_receiver) = sync_channel(1);
-        IME_STATUS_SENDER.set(inner_sender.clone()).unwrap();
 
-        // send_messageスレッド
-        let _send_message_handle = std::thread::spawn({
+        // workerスレッド
+        let _worker_handle = std::thread::spawn({
             let fatal_error = fatal_error.clone();
             let delay = *delay;
             let retry_number = *retry_number;
@@ -356,7 +300,7 @@ impl WindowsImeOnOffReceiver {
             let retry_span = *retry_span;
 
             move || {
-                while let Ok(_msg) = get_ime_message_receiver.recv()
+                while let Ok(_msg) = message_receiver.recv()
                     && fatal_error.is_none()
                 {
                     std::thread::sleep(std::time::Duration::from_millis(delay)); // IME変更を反映させるため
@@ -374,16 +318,8 @@ impl WindowsImeOnOffReceiver {
                         }
                     }
                 }
-            }
-        });
 
-        // UIスレッド
-        let _ui_handle = std::thread::spawn({
-            let fatal_error = fatal_error.clone();
-            move || {
-                if let Err(e) = ui_loop(&fatal_error) {
-                    send_fatal_error(e);
-                }
+                message_receiver
             }
         });
 
@@ -394,19 +330,14 @@ impl WindowsImeOnOffReceiver {
                 move || {
                     while fatal_error.is_none() {
                         std::thread::sleep(Duration::from_millis(polling_span));
-                        handle_try_send(
-                            &get_ime_message_sender,
-                            GetImeMessage,
-                            "WindowsImeOnOffReceiver::get_ime_message_sender".to_string(),
-                        );
+                        send_message(Message::GetImeStatus);
                     }
                 }
             })
         });
 
         Ok(Self {
-            _send_message_handle,
-            _ui_handle,
+            _worker_handle,
             _polling_handle,
             inner_receiver,
             pre_ime_status: None,
@@ -432,12 +363,14 @@ impl WindowsImeOnOffReceiver {
             }
         }
     }
-    pub fn shutdown(self) {
+    pub fn shutdown(self) -> MessageReceiver {
         send_fatal_error(AppError::CustomError("Receiver shutdown.".to_string()));
-        let _ = self._send_message_handle.join();
-        let _ = self._ui_handle.join();
+        let message_receiver = self._worker_handle.join().expect("worker thread panicked.");
         if let Some(_polling_handle) = self._polling_handle {
-            let _ = _polling_handle.join();
+            _polling_handle.join().expect("polling thread panicked.");
         }
+        debug!("WinOnOffImeReceiver shutdown.");
+
+        message_receiver
     }
 }

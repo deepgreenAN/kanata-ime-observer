@@ -1,10 +1,9 @@
-use crate::{AppError, FatalError, handle_try_send, send_fatal_error};
-
-use std::{
-    collections::HashMap,
-    sync::mpsc::{Receiver, sync_channel},
-    time::Duration,
+use crate::{
+    AppError, FatalError, InnerReceiver, Message, MessageReceiver, handle_try_send,
+    send_fatal_error, send_message,
 };
+
+use std::{collections::HashMap, sync::mpsc::sync_channel, time::Duration};
 
 use windows::Win32::{
     Globalization::LCIDToLocaleName,
@@ -17,7 +16,7 @@ use windows::Win32::{
     },
 };
 
-use log::error;
+use log::{debug, error};
 
 // 起動時のみ利用する。
 fn lang_id2locale(lang_id: u16) -> Option<String> {
@@ -95,6 +94,12 @@ fn get_foreground_locale(locale_map: &HashMap<u16, String>) -> Result<String, Ap
 
         let hkl = GetKeyboardLayout(target_thread_id);
 
+        if hkl.0 as usize == 0 {
+            return Err(AppError::WinApiError(
+                "Invalid HKL. It may happen when you use a console application.".to_string(),
+            ));
+        }
+
         match locale_map.get(&((hkl.0 as usize & 0xFFFF) as u16)) {
             Some(locale) => Ok(locale.to_owned()),
             None => Err(AppError::WinApiError("Unknown lang_id".to_string())),
@@ -114,13 +119,15 @@ impl Default for WindowsImeReceiverConfig {
 }
 
 pub struct WindowsImeReceiver {
-    _worker_handle: std::thread::JoinHandle<()>,
-    inner_receiver: Receiver<String>,
+    _worker_handle: std::thread::JoinHandle<MessageReceiver>,
+    _polling_handle: std::thread::JoinHandle<()>,
+    inner_receiver: InnerReceiver,
     pre_ime_status: Option<String>,
 }
 
 impl WindowsImeReceiver {
     pub fn new(
+        message_receiver: MessageReceiver,
         config: &WindowsImeReceiverConfig,
         fatal_error: &FatalError,
     ) -> Result<Self, AppError> {
@@ -132,11 +139,11 @@ impl WindowsImeReceiver {
 
         let _worker_handle = std::thread::spawn({
             let fatal_error = fatal_error.clone();
-            let polling_span = *polling_span;
-            move || {
-                while fatal_error.is_none() {
-                    std::thread::sleep(Duration::from_millis(polling_span));
 
+            move || {
+                while let Ok(_msg) = message_receiver.recv()
+                    && fatal_error.is_none()
+                {
                     match get_foreground_locale(&locale_map) {
                         Ok(locale) => {
                             handle_try_send(
@@ -150,11 +157,26 @@ impl WindowsImeReceiver {
                         }
                     }
                 }
+
+                message_receiver
+            }
+        });
+
+        let _polling_handle = std::thread::spawn({
+            let fatal_error = fatal_error.clone();
+            let polling_span = *polling_span;
+
+            move || {
+                while fatal_error.is_none() {
+                    std::thread::sleep(Duration::from_millis(polling_span));
+                    send_message(Message::GetImeStatus);
+                }
             }
         });
 
         Ok(Self {
             _worker_handle,
+            _polling_handle,
             inner_receiver,
             pre_ime_status: None,
         })
@@ -181,8 +203,14 @@ impl WindowsImeReceiver {
         }
     }
 
-    pub fn shutdown(self) {
+    pub fn shutdown(self) -> MessageReceiver {
         send_fatal_error(AppError::CustomError("Receiver shutdown.".to_string()));
-        let _ = self._worker_handle.join();
+        self._polling_handle
+            .join()
+            .expect("polling thread panicked.");
+        let message_receiver = self._worker_handle.join().expect("worker thread panicked.");
+        debug!("WinImeReceiver shutdown.");
+
+        message_receiver
     }
 }

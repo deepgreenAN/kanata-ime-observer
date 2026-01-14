@@ -12,7 +12,9 @@ use kanata_ime_observer::fcitx::FcitxImeReceiver as Receiver;
 use kanata_ime_observer::ibus::IbusImeReceiver as Receiver;
 
 #[cfg(all(feature = "winonoff", target_os = "windows"))]
-use kanata_ime_observer::win_onoff::WindowsImeOnOffReceiver as Receiver;
+use kanata_ime_observer::win_onoff::{
+    WindowsImeOnOffReceiver as Receiver, win_main_loop as main_loop,
+};
 
 #[cfg(all(not(feature = "winonoff"), target_os = "windows"))]
 use kanata_ime_observer::win::WindowsImeReceiver as Receiver;
@@ -182,7 +184,7 @@ fn main() -> Result<(), AppError> {
         });
 
         // 以下メインスレッドの処理
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", all(target_os = "windows", feature = "winonoff")))]
         if let Err(e) = main_loop(&fatal_error) {
             error!("main_loop stopped: {e}");
             send_fatal_error(e);
