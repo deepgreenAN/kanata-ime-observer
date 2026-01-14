@@ -1,12 +1,12 @@
-use crate::{AppError, FatalError, handle_try_send, send_fatal_error};
+use crate::{
+    AppError, FatalError, InnerReceiver, Message, MessageReceiver, handle_try_send,
+    send_fatal_error, send_message,
+};
 
 use log::{debug, error, info};
 use zbus::{Error as ZbusError, blocking::Connection, proxy};
 
-use std::{
-    sync::mpsc::{Receiver, sync_channel},
-    time::Duration,
-};
+use std::{sync::mpsc::sync_channel, time::Duration};
 
 #[proxy(
     default_service = "org.fcitx.Fcitx5",
@@ -28,13 +28,15 @@ impl Default for FcitxImeReceiverConfig {
     }
 }
 pub struct FcitxImeReceiver {
-    _worker_handle: std::thread::JoinHandle<()>,
-    inner_receiver: Receiver<String>,
+    _worker_handle: std::thread::JoinHandle<MessageReceiver>,
+    _polling_handle: std::thread::JoinHandle<()>,
+    inner_receiver: InnerReceiver,
     pre_ime_status: Option<String>,
 }
 
 impl FcitxImeReceiver {
     pub fn new(
+        message_receiver: MessageReceiver,
         config: &FcitxImeReceiverConfig,
         fatal_error: &FatalError,
     ) -> Result<Self, AppError> {
@@ -48,10 +50,11 @@ impl FcitxImeReceiver {
 
         let _worker_handle = std::thread::spawn({
             let fatal_error = fatal_error.clone();
-            let polling_span = *polling_span;
+
             move || {
-                while fatal_error.is_none() {
-                    std::thread::sleep(Duration::from_millis(polling_span));
+                while let Ok(_msg) = message_receiver.recv()
+                    && fatal_error.is_none()
+                {
                     match proxy.current_input_method() {
                         Ok(ime_engine) => {
                             handle_try_send(
@@ -72,11 +75,26 @@ impl FcitxImeReceiver {
                         },
                     }
                 }
+
+                message_receiver
+            }
+        });
+
+        let _polling_handle = std::thread::spawn({
+            let fatal_error = fatal_error.clone();
+            let polling_span = *polling_span;
+
+            move || {
+                while fatal_error.is_none() {
+                    std::thread::sleep(Duration::from_millis(polling_span));
+                    send_message(Message::GetImeStatus);
+                }
             }
         });
 
         Ok(Self {
             _worker_handle,
+            _polling_handle,
             inner_receiver,
             pre_ime_status: None,
         })
@@ -102,9 +120,14 @@ impl FcitxImeReceiver {
             }
         }
     }
-    pub fn shutdown(self) {
+    pub fn shutdown(self) -> MessageReceiver {
         send_fatal_error(AppError::CustomError("Receiver shutdown.".to_string()));
-        let _ = self._worker_handle.join();
-        debug!("FcitxImeReceiver shutdown.")
+        self._polling_handle
+            .join()
+            .expect("polling thread panicked.");
+        let message_receiver = self._worker_handle.join().expect("worker thread panicked.");
+        debug!("FcitxImeReceiver shutdown.");
+
+        message_receiver
     }
 }

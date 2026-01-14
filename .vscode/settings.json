@@ -1,6 +1,6 @@
 {
     "rust-analyzer.cargo.features": [
-        "fcitx",
+        // "fcitx",
         // "winonoff"
     ],
     "cSpell.words": [

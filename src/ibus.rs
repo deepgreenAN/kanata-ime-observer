@@ -1,4 +1,7 @@
-use crate::{AppError, FatalError, handle_try_send, send_fatal_error};
+use crate::{
+    AppError, FatalError, InnerReceiver, Message, MessageReceiver, handle_try_send,
+    send_fatal_error, send_message,
+};
 
 use log::{debug, error, info};
 use zbus::{
@@ -8,11 +11,7 @@ use zbus::{
     zvariant::{OwnedStructure, Str, Value},
 };
 
-use std::{
-    process::Command,
-    sync::mpsc::{Receiver, sync_channel},
-    time::Duration,
-};
+use std::{process::Command, sync::mpsc::sync_channel, time::Duration};
 
 #[proxy(
     default_service = "org.freedesktop.IBus",
@@ -56,13 +55,18 @@ impl Default for IbusImeReceiverConfig {
 }
 
 pub struct IbusImeReceiver {
-    _worker_handle: std::thread::JoinHandle<()>,
-    inner_receiver: Receiver<String>,
+    _worker_handle: std::thread::JoinHandle<MessageReceiver>,
+    _polling_handle: std::thread::JoinHandle<()>,
+    inner_receiver: InnerReceiver,
     pre_ime_status: Option<String>,
 }
 
 impl IbusImeReceiver {
-    pub fn new(config: &IbusImeReceiverConfig, fatal_error: &FatalError) -> Result<Self, AppError> {
+    pub fn new(
+        message_receiver: MessageReceiver,
+        config: &IbusImeReceiverConfig,
+        fatal_error: &FatalError,
+    ) -> Result<Self, AppError> {
         let IbusImeReceiverConfig { polling_span } = config;
 
         let cmd_out = Command::new("ibus")
@@ -82,11 +86,11 @@ impl IbusImeReceiver {
 
         let _worker_handle = std::thread::spawn({
             let fatal_error = fatal_error.clone();
-            let polling_span = *polling_span;
-            move || {
-                while fatal_error.is_none() {
-                    std::thread::sleep(Duration::from_millis(polling_span));
 
+            move || {
+                while let Ok(_msg) = message_receiver.recv()
+                    && fatal_error.is_none()
+                {
                     match proxy.get_global_engine() {
                         Ok(body) => match body_to_engine_name(body) {
                             Ok(ime_engine) => {
@@ -112,11 +116,26 @@ impl IbusImeReceiver {
                         },
                     }
                 }
+
+                message_receiver
+            }
+        });
+
+        let _polling_handle = std::thread::spawn({
+            let fatal_error = fatal_error.clone();
+            let polling_span = *polling_span;
+
+            move || {
+                while fatal_error.is_none() {
+                    std::thread::sleep(Duration::from_millis(polling_span));
+                    send_message(Message::GetImeStatus);
+                }
             }
         });
 
         Ok(Self {
             _worker_handle,
+            _polling_handle,
             inner_receiver,
             pre_ime_status: None,
         })
@@ -141,9 +160,14 @@ impl IbusImeReceiver {
             }
         }
     }
-    pub fn shutdown(self) {
+    pub fn shutdown(self) -> MessageReceiver {
         send_fatal_error(AppError::CustomError("Receiver shutdown.".to_string()));
-        let _ = self._worker_handle.join();
-        debug!("IbusImeReceiver shutdown.")
+        self._polling_handle
+            .join()
+            .expect("polling thread panicked.");
+        let message_receiver = self._worker_handle.join().expect("worker thread panicked.");
+        debug!("IbusImeReceiver shutdown.");
+
+        message_receiver
     }
 }
