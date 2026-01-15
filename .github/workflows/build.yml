@@ -73,11 +73,10 @@ jobs:
   build-macos-x64:
     runs-on: macos-13-intel
     steps:
-      - uses: hustcer/setup-nu@v3
       - uses: actions/checkout@v3
       - uses: dtolnay/rust-toolchain@stable
       - name: macos-x64 build and mv
-        shell: nu {0}
+        shell: bash
         run: |
           mkdir dist
           cargo build --release --target x86_64-apple-darwin

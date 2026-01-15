@@ -423,7 +423,7 @@ dependencies = [
 
 [[package]]
 name = "kanata_ime_observer"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "backon",
  "core-foundation",
