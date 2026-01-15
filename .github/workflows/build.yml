@@ -79,8 +79,8 @@ jobs:
         shell: bash
         run: |
           mkdir dist
-          cargo build --release --target x86_64-apple-darwin
-          mv target/x86_64-apple-darwin/release/kanata_ime_observer dist/kanata_ime_observer_mac_x64
+          cargo build --release
+          mv target/release/kanata_ime_observer dist/kanata_ime_observer_mac_x64
       - uses: actions/upload-artifact@v4
         with:
           name: macos-x64
