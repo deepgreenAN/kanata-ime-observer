@@ -51,12 +51,14 @@ pub fn initialize_app() -> Result<(MessageReceiver, FatalErrorReceiver), AppErro
     let (get_ime_status_message_sender, get_ime_status_message_receiver) = sync_channel(1);
     MESSAGE_SENDER
         .set(get_ime_status_message_sender)
-        .map_err(|_| AppError::CustomError("Inner bug. initialized multiple times.".to_string()))?;
+        .map_err(|_| {
+            AppError::CustomError("Internal bug. initialized multiple times.".to_string())
+        })?;
 
     let (fatal_error_sender, fatal_error_receiver) = sync_channel(1);
-    FATAL_ERROR_SENDER
-        .set(fatal_error_sender)
-        .map_err(|_| AppError::CustomError("Inner bug. initialized multiple times.".to_string()))?;
+    FATAL_ERROR_SENDER.set(fatal_error_sender).map_err(|_| {
+        AppError::CustomError("Internal bug. initialized multiple times.".to_string())
+    })?;
 
     Ok((get_ime_status_message_receiver, fatal_error_receiver))
 }
@@ -94,13 +96,13 @@ pub fn send_fatal_error(err: AppError) {
         if let Err(e) = sender.try_send(err) {
             match e {
                 TrySendError::Disconnected(_) => {
-                    error!("Inner bug. FATAL_ERROR_SENDER was disconnected. : {e}")
+                    error!("Internal bug. FATAL_ERROR_SENDER was disconnected. : {e}")
                 }
                 TrySendError::Full(_) => debug!("FATAL_ERROR_SENDER is full. :{e}"),
             }
         }
     } else {
-        error!("Inner bug. Set the FATAL_ERROR_SENDER");
+        error!("Internal bug. Set the FATAL_ERROR_SENDER");
     }
 }
 

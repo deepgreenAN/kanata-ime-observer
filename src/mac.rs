@@ -59,7 +59,7 @@ fn get_current_input_source() -> Result<String, AppError> {
         ))
         .downcast_into::<CFString>()
         .ok_or(AppError::MacApiError(
-            "Inner bug. Type miss match.".to_string(),
+            "Internal bug. Type miss match.".to_string(),
         ))?
         .to_string();
 

@@ -52,4 +52,37 @@ jobs:
         with:
           name: windows
           path: dist/*
-    
+  
+  build-macos-arm64:
+    runs-on: macos-latest
+    steps:
+      - uses: hustcer/setup-nu@v3
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+      - name: macos-arm64 build and mv
+        shell: nu {0}
+        run: |
+          mkdir dist
+          cargo build --release --target aarch64-apple-darwin
+          mv target/aarch64-apple-darwin/release/kanata_ime_observer dist/kanata_ime_observer_mac_arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64
+          path: dist/*
+  
+  build-macos-x64:
+    runs-on: macos-13-intel
+    steps:
+      - uses: hustcer/setup-nu@v3
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+      - name: macos-x64 build and mv
+        shell: nu {0}
+        run: |
+          mkdir dist
+          cargo build --release --target x86_64-apple-darwin
+          mv target/x86_64-apple-darwin/release/kanata_ime_observer dist/kanata_ime_observer_mac_x64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-x64
+          path: dist/*
