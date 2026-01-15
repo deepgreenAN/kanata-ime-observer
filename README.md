@@ -16,7 +16,7 @@ kanata_ime_observer observes the following changes of IME.
 
 ## Installation
 
-you can download pre-build binaries from [release page](https://github.com/deepgreenAN/kanata-ime-observer/releases).
+you can download pre-built binaries from [release page](https://github.com/deepgreenAN/kanata-ime-observer/releases).
 
 ## Usage
 
