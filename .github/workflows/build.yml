@@ -14,6 +14,11 @@ jobs:
       - uses: hustcer/setup-nu@v3
       - uses: actions/checkout@v3
       - uses: dtolnay/rust-toolchain@stable
+      - name: install lib
+        shell: nu {0}
+        run: |
+          sudo apt update
+          sudo apt install libdbus-1-dev pkg-config
       - name: linux build and mv
         shell: nu {0}
         run: |
