@@ -3,19 +3,10 @@ use crate::{
     send_fatal_error, send_message,
 };
 
-use log::{debug, error, info};
-use zbus::{Error as ZbusError, blocking::Connection, proxy};
+use dbus::blocking::SyncConnection;
+use log::{debug, info};
 
 use std::{sync::mpsc::sync_channel, time::Duration};
-
-#[proxy(
-    default_service = "org.fcitx.Fcitx5",
-    default_path = "/controller",
-    interface = "org.fcitx.Fcitx.Controller1"
-)]
-trait Controller {
-    fn current_input_method(&self) -> Result<String, ZbusError>;
-}
 
 #[derive(Debug)]
 pub struct FcitxImeReceiverConfig {
@@ -42,37 +33,39 @@ impl FcitxImeReceiver {
     ) -> Result<Self, AppError> {
         let FcitxImeReceiverConfig { polling_span } = config;
 
-        let conn = Connection::session()?;
-        info!("Connected to 'org.fcitx.Fcitx5'");
+        let conn = SyncConnection::new_session()?;
+        info!("Connected to 'session bus.'");
 
-        let proxy = ControllerProxyBlocking::new(&conn)?;
         let (inner_sender, inner_receiver) = sync_channel(1);
 
         let _worker_handle = std::thread::spawn({
             let fatal_error = fatal_error.clone();
 
             move || {
+                let proxy = conn.with_proxy(
+                    "org.fcitx.Fcitx5",
+                    "/controller",
+                    std::time::Duration::from_millis(500),
+                );
+
                 while let Ok(_msg) = message_receiver.recv()
                     && fatal_error.is_none()
                 {
-                    match proxy.current_input_method() {
-                        Ok(ime_engine) => {
+                    match proxy.method_call::<(String,), _, _, _>(
+                        "org.fcitx.Fcitx.Controller1",
+                        "CurrentInputMethod",
+                        (),
+                    ) {
+                        Ok((ime_engine,)) => {
                             handle_try_send(
                                 &inner_sender,
                                 ime_engine,
                                 "FcitxImeReceiver inner sender".to_string(),
                             );
                         }
-                        Err(zbus_err) => match zbus_err {
-                            ZbusError::InputOutput(_)
-                            | ZbusError::MethodError(_, _, _)
-                            | ZbusError::InvalidGUID => {
-                                send_fatal_error(zbus_err.into());
-                            }
-                            _ => {
-                                error!("{zbus_err}");
-                            }
-                        },
+                        Err(dbus_err) => {
+                            send_fatal_error(dbus_err.into());
+                        }
                     }
                 }
 

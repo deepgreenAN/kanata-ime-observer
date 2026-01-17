@@ -36,6 +36,7 @@ pub static FATAL_ERROR_SENDER: OnceCell<FatalErrorSender> = OnceCell::new();
 /// ime情報を取得するタイミングを通知するためのメッセージ。
 pub enum Message {
     GetImeStatus,
+    ImeStatus(String),
     CaughtFatalError,
 }
 

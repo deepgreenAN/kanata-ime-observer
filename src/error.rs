@@ -3,8 +3,8 @@
 pub enum AppError {
     /// ループを終了し，再接続を目指す．
     #[cfg(target_os = "linux")]
-    #[error(transparent)]
-    ZbusError(#[from] zbus::Error),
+    #[error("DbusError: {0}")]
+    DbusError(String),
 
     /// 起こりうるためログのみとする．
     #[cfg(target_os = "linux")]
@@ -49,6 +49,22 @@ pub enum AppError {
 impl From<lexopt::Error> for AppError {
     fn from(value: lexopt::Error) -> Self {
         AppError::ArgError(value.to_string())
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl From<dbus::Error> for AppError {
+    fn from(value: dbus::Error) -> Self {
+        let name = value
+            .name()
+            .map(|name| name.to_owned())
+            .unwrap_or("UnknownDbusError".to_string());
+        let message = value
+            .message()
+            .map(|message| message.to_owned())
+            .unwrap_or("unknown dbus message".to_string());
+
+        AppError::DbusError(format!("{name}:{message}"))
     }
 }
 

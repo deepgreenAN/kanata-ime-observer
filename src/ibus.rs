@@ -1,63 +1,23 @@
-use crate::{
-    AppError, FatalError, InnerReceiver, Message, MessageReceiver, handle_try_send,
-    send_fatal_error, send_message,
-};
+use crate::{AppError, FatalError, Message, MessageReceiver, send_fatal_error, send_message};
 
+use dbus::{blocking::SyncConnection, channel::Channel, message::MatchRule};
 use log::{debug, error, info};
-use zbus::{
-    Error as ZbusError,
-    blocking::connection::Builder,
-    proxy,
-    zvariant::{OwnedStructure, Str, Value},
-};
 
-use std::{process::Command, sync::mpsc::sync_channel, time::Duration};
-
-#[proxy(
-    default_service = "org.freedesktop.IBus",
-    default_path = "/org/freedesktop/IBus",
-    interface = "org.freedesktop.IBus"
-)]
-trait Ibus {
-    fn get_global_engine(&self) -> Result<OwnedStructure, ZbusError>;
-}
-
-fn body_to_engine_name(body: OwnedStructure) -> Result<String, AppError> {
-    if let Value::Value(inner) = body
-        .0
-        .into_fields()
-        .into_iter()
-        .next()
-        .ok_or(AppError::DbusParseError)?
-        && let Value::Structure(inner_structure) = *inner
-        && let Ok(engine_name) = Str::try_from(
-            inner_structure
-                .fields()
-                .get(2)
-                .ok_or(AppError::DbusParseError)?,
-        )
-    {
-        Ok(engine_name.as_str().to_string())
-    } else {
-        Err(AppError::DbusParseError)
-    }
-}
+use std::{process::Command, time::Duration};
 
 #[derive(Debug)]
-pub struct IbusImeReceiverConfig {
-    pub polling_span: u64,
-}
+pub struct IbusImeReceiverConfig {}
 
+#[allow(clippy::derivable_impls)]
 impl Default for IbusImeReceiverConfig {
     fn default() -> Self {
-        Self { polling_span: 100 }
+        Self {}
     }
 }
 
 pub struct IbusImeReceiver {
-    _worker_handle: std::thread::JoinHandle<MessageReceiver>,
-    _polling_handle: std::thread::JoinHandle<()>,
-    inner_receiver: InnerReceiver,
+    _worker_handle: std::thread::JoinHandle<()>,
+    message_receiver: MessageReceiver,
     pre_ime_status: Option<String>,
 }
 
@@ -67,7 +27,7 @@ impl IbusImeReceiver {
         config: &IbusImeReceiverConfig,
         fatal_error: &FatalError,
     ) -> Result<Self, AppError> {
-        let IbusImeReceiverConfig { polling_span } = config;
+        let IbusImeReceiverConfig {} = config;
 
         let cmd_out = Command::new("ibus")
             .arg("address")
@@ -78,96 +38,81 @@ impl IbusImeReceiver {
             .map_err(|_| AppError::CustomError("Cannot get 'ibus address'".to_string()))?;
         address = address.trim_end().to_string();
 
-        let conn = Builder::address(address.as_str())?.build()?;
+        let conn: SyncConnection = Channel::open_private(&address)?.into();
         info!("Connected to address: '{}'", address);
 
-        let proxy = IbusProxyBlocking::new(&conn)?;
-        let (inner_sender, inner_receiver) = sync_channel(1);
+        let proxy = conn.with_proxy(
+            "org.freedesktop.IBus",
+            "/org/freedesktop/IBus",
+            std::time::Duration::from_millis(500),
+        );
+
+        let signal_rule = MatchRule::new_signal("org.freedesktop.IBus", "GlobalEngineChanged");
+
+        let id = proxy.match_start(
+            signal_rule,
+            true,
+            Box::new(|message, _| {
+                match message.read1::<String>() {
+                    Ok(engine_name) => {
+                        send_message(Message::ImeStatus(engine_name));
+                    }
+                    Err(_) => {
+                        error!("{}", AppError::DbusParseError);
+                    }
+                }
+                true
+            }),
+        )?;
 
         let _worker_handle = std::thread::spawn({
             let fatal_error = fatal_error.clone();
 
             move || {
-                while let Ok(_msg) = message_receiver.recv()
-                    && fatal_error.is_none()
-                {
-                    match proxy.get_global_engine() {
-                        Ok(body) => match body_to_engine_name(body) {
-                            Ok(ime_engine) => {
-                                handle_try_send(
-                                    &inner_sender,
-                                    ime_engine,
-                                    "IbusImeReceiver inner receiver".to_string(),
-                                );
-                            }
-                            Err(e) => {
-                                error!("{e}");
-                            } // dbusメソッドコールのパースの失敗
-                        },
-                        Err(zbus_err) => match zbus_err {
-                            ZbusError::InputOutput(_)
-                            | ZbusError::MethodError(_, _, _)
-                            | ZbusError::InvalidGUID => {
-                                send_fatal_error(zbus_err.into());
-                            }
-                            _ => {
-                                error!("{zbus_err}");
-                            }
-                        },
+                while fatal_error.is_none() {
+                    if let Err(e) = conn.process(Duration::from_millis(1000)) {
+                        send_fatal_error(e.into());
                     }
                 }
 
-                message_receiver
-            }
-        });
-
-        let _polling_handle = std::thread::spawn({
-            let fatal_error = fatal_error.clone();
-            let polling_span = *polling_span;
-
-            move || {
-                while fatal_error.is_none() {
-                    std::thread::sleep(Duration::from_millis(polling_span));
-                    send_message(Message::GetImeStatus);
+                if let Err(e) = conn.remove_match(id) {
+                    error!("{}", Into::<AppError>::into(e));
                 }
             }
         });
 
         Ok(Self {
             _worker_handle,
-            _polling_handle,
-            inner_receiver,
+            message_receiver,
             pre_ime_status: None,
         })
     }
     pub fn receive(&mut self) -> Result<String, AppError> {
         loop {
-            let new_ime_status =
-                self.inner_receiver
+            if let Message::ImeStatus(new_ime_status) =
+                self.message_receiver
                     .recv()
                     .map_err(|_| AppError::InnerReceiverError {
-                        receiver_name: "IbusImeReceiver inner receiver".to_string(),
-                    })?;
-
-            if let Some(pre_ime_status) = &self.pre_ime_status {
-                if *pre_ime_status != new_ime_status {
+                        receiver_name: "IbusImeReceiver message_receiver".to_string(),
+                    })?
+            {
+                if let Some(pre_ime_status) = &self.pre_ime_status {
+                    if *pre_ime_status != new_ime_status {
+                        self.pre_ime_status = Some(new_ime_status.clone());
+                        return Ok(new_ime_status);
+                    }
+                } else {
                     self.pre_ime_status = Some(new_ime_status.clone());
                     return Ok(new_ime_status);
                 }
-            } else {
-                self.pre_ime_status = Some(new_ime_status.clone());
-                return Ok(new_ime_status);
             }
         }
     }
     pub fn shutdown(self) -> MessageReceiver {
         send_fatal_error(AppError::CustomError("Receiver shutdown.".to_string()));
-        self._polling_handle
-            .join()
-            .expect("polling thread panicked.");
-        let message_receiver = self._worker_handle.join().expect("worker thread panicked.");
+        self._worker_handle.join().expect("worker thread panicked.");
         debug!("IbusImeReceiver shutdown.");
 
-        message_receiver
+        self.message_receiver
     }
 }

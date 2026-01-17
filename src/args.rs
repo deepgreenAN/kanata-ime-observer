@@ -123,6 +123,7 @@ pub struct Args {
     pub app_config: MacImeReceiverConfig,
 }
 
+#[allow(unused_mut)]
 pub fn parse_args() -> Result<Args, AppError> {
     let mut parser = Parser::from_env();
 
@@ -251,7 +252,7 @@ pub fn parse_args() -> Result<Args, AppError> {
             Short('d') | Long("debug") => {
                 log_level = Level::Debug;
             }
-            #[cfg(target_os = "linux")]
+            #[cfg(all(feature = "fcitx", target_os = "linux"))]
             Long("polling") => {
                 let polling_span: u64 = parser.value()?.parse()?;
                 app_config.polling_span = polling_span;
