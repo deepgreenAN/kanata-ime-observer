@@ -1,6 +1,6 @@
 [package]
 name = "kanata_ime_observer"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2024"
 default-run = "kanata_ime_observer"
 license = "MIT"
@@ -22,7 +22,6 @@ backon = { version = "1.6.0", default-features = false, features = [
 ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-# zbus = "5.12.0"
 dbus = "0.9.10"
 
 
