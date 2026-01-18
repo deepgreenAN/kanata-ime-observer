@@ -32,8 +32,13 @@ use windows::core::w;
 use log::{debug, error};
 
 const IMC_GETOPENSTATUS: usize = 0x0005;
-const VK_IME_ON: u16 = 244;
-const VK_IME_OFF: u16 = 243;
+
+const VK_IME_ON: u16 = windows::Win32::UI::Input::KeyboardAndMouse::VK_IME_ON.0 as _; // RawInputでは出力されない
+const VK_IME_OFF: u16 = windows::Win32::UI::Input::KeyboardAndMouse::VK_IME_OFF.0 as _; // RawInputでは出力されない
+const VK_JP_IME_ON: u16 = 244; // 日本語用
+const VK_JP_IME_OFF: u16 = 243; // 日本語用
+const VK_JP_EISU: u16 = 240; // 日本語用
+const VK_HANGUL: u16 = windows::Win32::UI::Input::KeyboardAndMouse::VK_HANGUL.0 as _; // ハングル用
 
 /// フォーカス変更時に実行されるコールバック
 extern "system" fn win_event_proc(
@@ -160,7 +165,9 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                             // println!("kayboard.MakeCode: {}", keyboard.MakeCode);
 
                             // kanataのバグ？でgrvではVK_IME_ONのみ出力するため、その都度問い合わせる。
-                            if keyboard.VKey == VK_IME_ON || keyboard.VKey == VK_IME_OFF {
+                            if let VK_JP_IME_ON | VK_JP_IME_OFF | VK_JP_EISU | VK_IME_ON
+                            | VK_IME_OFF | VK_HANGUL = keyboard.VKey
+                            {
                                 send_message(Message::GetImeStatus);
                             }
                         }

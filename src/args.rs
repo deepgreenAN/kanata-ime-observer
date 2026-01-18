@@ -257,17 +257,12 @@ pub fn parse_args() -> Result<Args, AppError> {
                 let polling_span: u64 = parser.value()?.parse()?;
                 app_config.polling_span = polling_span;
             }
-            #[cfg(all(not(feature = "winonoff"), target_os = "windows"))]
-            Long("polling") => {
-                let polling_span: u64 = parser.value()?.parse()?;
-                app_config.polling_span = polling_span;
-            }
-            #[cfg(all(feature = "winonoff", target_os = "windows"))]
+            #[cfg(target_os = "windows")]
             Long("polling") => {
                 let polling_span: u64 = parser.value()?.parse()?;
                 app_config.polling_span = Some(polling_span);
             }
-            #[cfg(all(feature = "winonoff", target_os = "windows"))]
+            #[cfg(target_os = "windows")]
             Long("without-polling") => {
                 app_config.polling_span = None;
             }
@@ -286,7 +281,7 @@ pub fn parse_args() -> Result<Args, AppError> {
                 let retry_span: u64 = parser.value()?.parse()?;
                 app_config.retry_span = retry_span;
             }
-            #[cfg(any(all(feature = "winonoff", target_os = "windows"), target_os = "macos"))]
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
             Long("delay") => {
                 let delay: u64 = parser.value()?.parse()?;
                 app_config.delay = delay;
