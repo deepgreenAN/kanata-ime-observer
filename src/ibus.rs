@@ -89,21 +89,32 @@ impl IbusImeReceiver {
     }
     pub fn receive(&mut self) -> Result<String, AppError> {
         loop {
-            if let Message::ImeStatus(new_ime_status) =
-                self.message_receiver
-                    .recv()
-                    .map_err(|_| AppError::InnerReceiverError {
-                        receiver_name: "IbusImeReceiver message_receiver".to_string(),
-                    })?
-            {
-                if let Some(pre_ime_status) = &self.pre_ime_status {
-                    if *pre_ime_status != new_ime_status {
+            match self
+                .message_receiver
+                .recv()
+                .map_err(|_| AppError::InnerReceiverError {
+                    receiver_name: "IbusImeReceiver message_receiver".to_string(),
+                })? {
+                Message::ImeStatus(new_ime_status) => {
+                    if let Some(pre_ime_status) = &self.pre_ime_status {
+                        if *pre_ime_status != new_ime_status {
+                            self.pre_ime_status = Some(new_ime_status.clone());
+                            return Ok(new_ime_status);
+                        }
+                    } else {
                         self.pre_ime_status = Some(new_ime_status.clone());
                         return Ok(new_ime_status);
                     }
-                } else {
-                    self.pre_ime_status = Some(new_ime_status.clone());
-                    return Ok(new_ime_status);
+                }
+                Message::CaughtFatalError => {
+                    return Err(AppError::CustomError(
+                        "IbusImeReceiver caught fatal error.".to_string(),
+                    ));
+                }
+                Message::GetImeStatus => {
+                    return Err(AppError::CustomError(
+                        "Internal bug. IbusImeReceiver does not use GetImeStatus".to_string(),
+                    ));
                 }
             }
         }
