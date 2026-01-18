@@ -46,10 +46,10 @@ fn options_str() -> String {
     -d|--debug
         Enable debug logging.
 
-    --polling <MILLISECOND> (linux default 100) (win default 200) (win_onoff default 1000)
-        Polling span [ms] of dbus method-call(linux), SendMessageTimeout(win_onoff), GetKeyboardLayout(win).
+    --polling <MILLISECOND> (linux_fcitx, win, win_onoff only) (linux_fcitx default 200) (win default 500) (win_onoff default 1000)
+        Polling span [ms] of dbus method-call(linux_fcitx), GetKeyboardLayout(win), SendMessageTimeout(win_onoff).
     
-    --without-polling (win_onoff only)
+    --without-polling (win, win_onoff only)
         Disable polling.
 
     --retry-number <TIMES> (win_onoff only) (default 3)
@@ -61,8 +61,8 @@ fn options_str() -> String {
     --retry-span <MILLISECOND> (win_onoff only) (default 100)
         The span [ms] of retry SendMessageTimeout.
 
-    --delay <MILLISECOND> (win_onoff default 50) (mac default 50)
-        The delay from action to SendMessageTimeout(win_onoff), TISCopyCurrentKeyboardInputSource(mac).  
+    --delay <MILLISECOND> (win, win_onoff, mac only) (win default 50) (win_onoff default 50) (mac default 50)
+        The delay from action to GetKeyboardLayout(win), SendMessageTimeout(win_onoff), TISCopyCurrentKeyboardInputSource(mac).  
 ".to_string()
 }
 

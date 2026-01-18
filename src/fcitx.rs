@@ -15,7 +15,7 @@ pub struct FcitxImeReceiverConfig {
 
 impl Default for FcitxImeReceiverConfig {
     fn default() -> Self {
-        Self { polling_span: 100 }
+        Self { polling_span: 200 }
     }
 }
 pub struct FcitxImeReceiver {
