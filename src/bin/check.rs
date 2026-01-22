@@ -22,7 +22,9 @@ use kanata_ime_observer::win::{
 };
 
 #[cfg(target_os = "macos")]
-use kanata_ime_observer::mac::{MacImeReceiver as Receiver, mac_main_loop as main_loop};
+use kanata_ime_observer::mac::{
+    MacImeReceiver as Receiver, MacImeReceiverConfig as Config, mac_main_loop as main_loop,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (app_message_receiver, app_fatal_error_receiver) = initialize_app()?;
