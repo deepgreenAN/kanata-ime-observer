@@ -46,8 +46,8 @@ fn options_str() -> String {
     -d|--debug
         Enable debug logging.
 
-    --polling <MILLISECOND> (linux_fcitx, win, win_onoff only) (linux_fcitx default 200) (win default 500) (win_onoff default 1000)
-        Polling span [ms] of dbus method-call(linux_fcitx), GetKeyboardLayout(win), SendMessageTimeout(win_onoff).
+    --polling <MILLISECOND> (win, win_onoff only) (win default 500) (win_onoff default 1000)
+        Polling span [ms] of GetKeyboardLayout(win), SendMessageTimeout(win_onoff).
     
     --without-polling (win, win_onoff only)
         Disable polling.
@@ -251,11 +251,6 @@ pub fn parse_args() -> Result<Args, AppError> {
             }
             Short('d') | Long("debug") => {
                 log_level = Level::Debug;
-            }
-            #[cfg(all(feature = "fcitx", target_os = "linux"))]
-            Long("polling") => {
-                let polling_span: u64 = parser.value()?.parse()?;
-                app_config.polling_span = polling_span;
             }
             #[cfg(target_os = "windows")]
             Long("polling") => {

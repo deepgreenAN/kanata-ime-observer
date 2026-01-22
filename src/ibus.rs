@@ -1,9 +1,65 @@
-use crate::{AppError, FatalError, Message, MessageReceiver, send_fatal_error, send_message};
+use crate::{
+    AppError, FatalError, InnerReceiver, Message, MessageReceiver, handle_try_send,
+    send_fatal_error, send_message,
+};
 
 use dbus::{blocking::SyncConnection, channel::Channel, message::MatchRule};
 use log::{debug, error, info};
 
-use std::{process::Command, time::Duration};
+use std::{process::Command, sync::mpsc::sync_channel, time::Duration};
+
+pub fn dbus_main_loop(fatal_error: &FatalError) -> Result<(), AppError> {
+    let cmd_out = Command::new("ibus")
+        .arg("address")
+        .output()
+        .map_err(|_| AppError::CustomError("Cannot get 'ibus address'".to_string()))?;
+
+    let mut address = String::from_utf8(cmd_out.stdout)
+        .map_err(|_| AppError::CustomError("Cannot get 'ibus address'".to_string()))?;
+    address = address.trim_end().to_string();
+
+    let conn: SyncConnection = Channel::open_private(&address)?.into();
+    info!("Connected to address: '{}'", address);
+
+    let proxy = conn.with_proxy(
+        "org.freedesktop.IBus",
+        "/org/freedesktop/IBus",
+        std::time::Duration::from_millis(500),
+    );
+
+    let signal_rule = MatchRule::new_signal("org.freedesktop.IBus", "GlobalEngineChanged");
+
+    let token = proxy.match_start(
+        signal_rule,
+        true,
+        Box::new(|message, _| {
+            match message.read1::<String>() {
+                Ok(engine_name) => {
+                    send_message(Message::ImeStatus(engine_name));
+                }
+                Err(_) => {
+                    error!(
+                        "{}",
+                        AppError::DbusParseError("Couldn't read GlobalEngineChanged.".to_string())
+                    );
+                }
+            }
+            true
+        }),
+    )?;
+
+    // メインループ
+    while fatal_error.is_none() {
+        conn.process(Duration::from_millis(1000))?;
+    }
+
+    // 不要だが一応。
+    conn.remove_match(token)?;
+
+    Err(AppError::CaughtFatalError {
+        location: "dbus_main_loop".to_string(),
+    })
+}
 
 #[derive(Debug)]
 pub struct IbusImeReceiverConfig {}
@@ -16,8 +72,8 @@ impl Default for IbusImeReceiverConfig {
 }
 
 pub struct IbusImeReceiver {
-    _worker_handle: std::thread::JoinHandle<()>,
-    message_receiver: MessageReceiver,
+    _worker_handle: std::thread::JoinHandle<MessageReceiver>,
+    inner_receiver: InnerReceiver,
     pre_ime_status: Option<String>,
 }
 
@@ -29,101 +85,68 @@ impl IbusImeReceiver {
     ) -> Result<Self, AppError> {
         let IbusImeReceiverConfig {} = config;
 
-        let cmd_out = Command::new("ibus")
-            .arg("address")
-            .output()
-            .map_err(|_| AppError::CustomError("Cannot get 'ibus address'".to_string()))?;
-
-        let mut address = String::from_utf8(cmd_out.stdout)
-            .map_err(|_| AppError::CustomError("Cannot get 'ibus address'".to_string()))?;
-        address = address.trim_end().to_string();
-
-        let conn: SyncConnection = Channel::open_private(&address)?.into();
-        info!("Connected to address: '{}'", address);
-
-        let proxy = conn.with_proxy(
-            "org.freedesktop.IBus",
-            "/org/freedesktop/IBus",
-            std::time::Duration::from_millis(500),
-        );
-
-        let signal_rule = MatchRule::new_signal("org.freedesktop.IBus", "GlobalEngineChanged");
-
-        let id = proxy.match_start(
-            signal_rule,
-            true,
-            Box::new(|message, _| {
-                match message.read1::<String>() {
-                    Ok(engine_name) => {
-                        send_message(Message::ImeStatus(engine_name));
-                    }
-                    Err(_) => {
-                        error!("{}", AppError::DbusParseError);
-                    }
-                }
-                true
-            }),
-        )?;
+        let (inner_sender, inner_receiver) = sync_channel(1);
 
         let _worker_handle = std::thread::spawn({
             let fatal_error = fatal_error.clone();
 
             move || {
-                while fatal_error.is_none() {
-                    if let Err(e) = conn.process(Duration::from_millis(1000)) {
-                        send_fatal_error(e.into());
+                while let Ok(msg) = message_receiver.recv()
+                    && fatal_error.is_none()
+                {
+                    match msg {
+                        Message::ImeStatus(ime_status) => {
+                            handle_try_send(
+                                &inner_sender,
+                                ime_status,
+                                "IbusImeReceiver inner sender".to_string(),
+                            );
+                        }
+                        Message::CaughtFatalError => {
+                            handle_try_send(
+                                &inner_sender,
+                                String::new(),
+                                "IbusImeReceiver inner sender".to_string(),
+                            ); // ループを回すため
+                        }
+                        Message::GetImeStatus => {} // 実際には呼ばれない
                     }
                 }
-
-                if let Err(e) = conn.remove_match(id) {
-                    error!("{}", Into::<AppError>::into(e));
-                }
+                message_receiver
             }
         });
 
         Ok(Self {
             _worker_handle,
-            message_receiver,
+            inner_receiver,
             pre_ime_status: None,
         })
     }
     pub fn receive(&mut self) -> Result<String, AppError> {
         loop {
-            match self
-                .message_receiver
-                .recv()
-                .map_err(|_| AppError::InnerReceiverError {
-                    receiver_name: "IbusImeReceiver message_receiver".to_string(),
-                })? {
-                Message::ImeStatus(new_ime_status) => {
-                    if let Some(pre_ime_status) = &self.pre_ime_status {
-                        if *pre_ime_status != new_ime_status {
-                            self.pre_ime_status = Some(new_ime_status.clone());
-                            return Ok(new_ime_status);
-                        }
-                    } else {
-                        self.pre_ime_status = Some(new_ime_status.clone());
-                        return Ok(new_ime_status);
-                    }
+            let new_ime_status =
+                self.inner_receiver
+                    .recv()
+                    .map_err(|_| AppError::InnerReceiverError {
+                        receiver_name: "IbusImeReceiver inner receiver".to_owned(),
+                    })?;
+
+            if let Some(pre_ime_status) = &self.pre_ime_status {
+                if *pre_ime_status != new_ime_status {
+                    self.pre_ime_status = Some(new_ime_status.clone());
+                    return Ok(new_ime_status);
                 }
-                Message::CaughtFatalError => {
-                    return Err(AppError::CustomError(
-                        "IbusImeReceiver caught fatal error.".to_string(),
-                    ));
-                }
-                Message::GetImeStatus => {
-                    return Err(AppError::CustomError(
-                        "Internal bug. IbusImeReceiver does not use GetImeStatus".to_string(),
-                    ));
-                }
+            } else {
+                self.pre_ime_status = Some(new_ime_status.clone());
+                return Ok(new_ime_status);
             }
         }
     }
     pub fn shutdown(self) -> MessageReceiver {
         send_fatal_error(AppError::CustomError("Receiver shutdown.".to_string()));
-        self._worker_handle.join().expect("worker thread panicked.");
+        let message_receiver = self._worker_handle.join().expect("worker thread panicked.");
         debug!("IbusImeReceiver shutdown.");
 
-        self.message_receiver
+        message_receiver
     }
 }

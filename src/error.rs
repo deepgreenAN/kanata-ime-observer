@@ -1,49 +1,61 @@
+/// アプリケーションのエラー。以下の方針に従う。
+/// - TCP接続のエラーは再接続を試みる。
+/// - ループ開始前にリソース取得などの際にエラーが起きた場合はアプリを終了する。
+/// - ループ中に起きた場合、無視できるものはログ、重大なものはFatalErrorを投げて再接続を試みる。
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
-    /// ループを終了し，再接続を目指す．
+    /// Dbusの汎用的なエラー。
     #[cfg(target_os = "linux")]
     #[error("DbusError: {0}")]
     DbusError(String),
 
-    /// 起こりうるためログのみとする．
+    /// Dbusデータのパースエラー。
     #[cfg(target_os = "linux")]
-    #[error("DbusParseError")]
-    DbusParseError,
+    #[error("DbusParseError: {0}")]
+    DbusParseError(String),
 
-    /// メインループの場合各スレッドのループを終了する。その他では失敗しやすいため、ログのみとする．
+    /// WindowsAPIに関するエラー。
     #[cfg(target_os = "windows")]
     #[error("WinApiError: {0}")]
     WinApiError(String),
 
-    /// メインループの場合各スレッドのループを終了する。その他ではログのみとする。
+    /// MacAPIに関するエラー。
     #[cfg(target_os = "macos")]
     #[error("MacApiError: {0}")]
     MacApiError(String),
 
-    /// 各スレッドのループを終了する．
+    /// 内部レシーバーのエラー。相手センダーがドロップした際に起こる。基本的にFatalErrorを投げる。
     #[error("InnerReceiverError: inner sender was dropped. Receiver: {receiver_name}")]
     InnerReceiverError { receiver_name: String },
 
-    /// 各スレッドのループを終了する．
+    /// 内部センダーのエラー。相手レシーバーがドロップした際に起こる。基本的にFatalErrorを投げる。
     #[error("InnerSenderError: inner receiver was dropped. Sender: {sender_name}")]
     InnerSenderError { sender_name: String },
 
-    /// スレッドのループを終了する．
+    /// kanataとの通信の際のSerdeエラー。
     #[error(transparent)]
     SerdeError(#[from] serde_json::Error),
 
+    /// kanataとの通信の際のIOエラー。
     #[error(transparent)]
     IoError(#[from] std::io::Error),
 
+    /// その他のエラー。
     #[error("CustomError: {0}")]
     CustomError(String),
 
+    /// コマンドライン引数に関するエラー。
     #[error("ArgError: {0}")]
     ArgError(String),
 
+    /// 未知のkanataメッセージに関するエラー。
     #[error("KanataMessageError")]
     KanataMessageError,
+
+    /// FatalErrorを検知してループを終了するエラー。基本的にログが残りループが終了し、再接続を試みる。
+    #[error("{location} was stopped by fatal error.")]
+    CaughtFatalError { location: String },
 }
 
 impl From<lexopt::Error> for AppError {

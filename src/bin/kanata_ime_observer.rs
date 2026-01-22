@@ -6,10 +6,10 @@ use kanata_ime_observer::{
 };
 
 #[cfg(all(feature = "fcitx", target_os = "linux"))]
-use kanata_ime_observer::fcitx::FcitxImeReceiver as Receiver;
+use kanata_ime_observer::fcitx::{FcitxImeReceiver as Receiver, dbus_main_loop as main_loop};
 
 #[cfg(all(not(feature = "fcitx"), target_os = "linux"))]
-use kanata_ime_observer::ibus::IbusImeReceiver as Receiver;
+use kanata_ime_observer::ibus::{IbusImeReceiver as Receiver, dbus_main_loop as main_loop};
 
 #[cfg(all(feature = "winonoff", target_os = "windows"))]
 use kanata_ime_observer::win_onoff::{
@@ -58,10 +58,9 @@ fn write_to_kanata(
             info!("Sended the message to kanata.")
         }
     }
-
-    Err(AppError::CustomError(
-        "write_to_kanata: Caught the fatal error.".to_string(),
-    ))
+    Err(AppError::CaughtFatalError {
+        location: "write_to_kanata".to_string(),
+    })
 }
 
 fn read_from_kanata(kanata_stream: TcpStream, fatal_error: &FatalError) -> Result<(), AppError> {
@@ -93,9 +92,9 @@ fn read_from_kanata(kanata_stream: TcpStream, fatal_error: &FatalError) -> Resul
         }
     }
 
-    Err(AppError::CustomError(
-        "read_from_kanata: Caught the fatal error.".to_string(),
-    ))
+    Err(AppError::CaughtFatalError {
+        location: "read_from_kanata".to_string(),
+    })
 }
 
 fn main() -> Result<(), AppError> {
@@ -162,12 +161,14 @@ fn main() -> Result<(), AppError> {
             let command = Arc::clone(&command);
 
             move || {
-                if let Err(e) =
+                let Err(e) =
                     write_to_kanata(&mut ime_receiver, &command, writer_stream, &fatal_error)
-                {
-                    error!("write_to_kanata stopped: {e}");
-                    send_fatal_error(e);
-                }
+                else {
+                    unreachable!("write_to_kanata should stopped by AppError.");
+                };
+
+                error!("write_to_kanata stopped: {e}");
+                send_fatal_error(e);
 
                 ime_receiver.shutdown()
             }
@@ -176,20 +177,25 @@ fn main() -> Result<(), AppError> {
         let read_handle = std::thread::spawn({
             let fatal_error = fatal_error.clone();
             move || {
-                if let Err(e) = read_from_kanata(reader_stream, &fatal_error) {
-                    error!("read_from_kanata stopped: {e}");
-                    send_fatal_error(e);
-                }
+                let Err(e) = read_from_kanata(reader_stream, &fatal_error) else {
+                    unreachable!("read_to_kanata should stopped by AppError");
+                };
+
+                error!("read_from_kanata stopped: {e}");
+                send_fatal_error(e);
             }
         });
 
         // 以下メインスレッドの処理
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
-        if let Err(e) = main_loop(&fatal_error) {
-            error!("main_loop stopped: {e}");
-            send_fatal_error(e);
+        let Err(e) = main_loop(&fatal_error) else {
+            unreachable!("main loop should stopped by AppError.");
+        };
+        if let AppError::CaughtFatalError { .. } = e {
+        } else {
+            return Err(e); // アプリケーションを終了する。失敗可能性がある。
         }
 
+        // 以下ハンドルの処理
         app_fatal_error_receiver = fatal_error_loop_handle
             .join()
             .expect("catch_fatal_error panicked.");

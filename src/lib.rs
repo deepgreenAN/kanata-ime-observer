@@ -139,6 +139,7 @@ pub fn initialize_fatal_error(fatal_error_receiver: &FatalErrorReceiver) -> Fata
     FatalError::new()
 }
 
+/// グローバルセンダーを通したメッセージの送信。
 pub fn send_message(message: Message) {
     if let Some(message_sender) = MESSAGE_SENDER.get() {
         handle_try_send(message_sender, message, "MESSAGE_SENDER".to_string());
