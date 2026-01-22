@@ -128,7 +128,7 @@ checksum = "7ee5b5339afb4c41626dde77b7a611bd4f2c202b897852b4bcf5d03eddc61010"
 
 [[package]]
 name = "kanata_ime_observer"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "backon",
  "core-foundation",
