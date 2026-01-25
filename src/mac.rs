@@ -102,9 +102,15 @@ pub fn mac_main_loop(fatal_error: &FatalError) -> Result<(), AppError> {
         let _ = Box::from_raw(observer_ptr);
     }
 
-    Err(AppError::CustomError(
-        "mac_main_loop: Caught the fatal error.".to_string(),
-    ))
+    if fatal_error.is_none() {
+        Err(AppError::MacApiError(
+            "RunResult::Stopped received.".to_string(),
+        ))
+    } else {
+        Err(AppError::CaughtFatalError {
+            location: "mac_main_loop".to_string(),
+        })
+    }
 }
 
 #[derive(Debug)]
