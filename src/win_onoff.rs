@@ -210,8 +210,7 @@ pub fn win_main_loop(fatal_error: &FatalError) -> Result<(), AppError> {
             ..Default::default()
         };
 
-        let atom = RegisterClassExW(&wc);
-        debug_assert!(atom != 0);
+        RegisterClassExW(&wc);
 
         let hwnd = CreateWindowExW(
             WINDOW_EX_STYLE::default(),
@@ -251,7 +250,13 @@ pub fn win_main_loop(fatal_error: &FatalError) -> Result<(), AppError> {
         }
     }
 
-    Ok(())
+    if fatal_error.is_none() {
+        Err(AppError::WinApiError("WM_QUIT received.".to_string()))
+    } else {
+        Err(AppError::CaughtFatalError {
+            location: "win_main_loop".to_string(),
+        })
+    }
 }
 
 #[derive(Debug)]
